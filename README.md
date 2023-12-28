@@ -90,7 +90,7 @@ The content below is not necessary for project deployment, just for deeper discu
 
 ### Why contrastive learning is slightly complex in DDP?
 
-We mainly discuss about two things for this section:
+We mainly discuss about two things and their interaction for this section:
 
 * Separable and Non-separable Loss
 * Pytorch's mechanism of distributed gradient calculation——gradient bucket
@@ -99,19 +99,98 @@ We mainly discuss about two things for this section:
 
 #### Separable and Non-separable Loss
 
-[Separable and Non-separable Loss in detail](https://amsword.medium.com/gradient-backpropagation-with-torch-distributed-all-gather-9f3941a381f8)
+In a distributed computing environment, the computation of loss functions that are separable can be performed locally on each GPU(e.g. cross entropy). This local computation covers the entire loss calculation for every single sample, allowing for an end-to-end loss evaluation within the local context of each processing unit. Subsequently, the average gradient across all parameters that require gradient computation is obtained via a bucketing mechanism, calculating loss which is representative of batch level.
 
-可分LOSS的GPU本地计算结果，以every `sigle sample`为视角完成了完整的LOSS计算过程，最后利用bucket在 `require_grad=True` 的 `parameters` 上平均梯度即可得到`batch`为单位的LOSS；分布式场景下，不可分LOSS在每个GPU本地计算的结果并不能作为一次完整的LOSS计算，DDP的默认行为不与非分布式场景下等价；
+Contrastingly, in the domain of contrastive learning under distributed data parallel (DDP), loss functions that are Non-separable by nature cannot be computed in isolation on individual GPUs to yield a complete loss calculation. 
+
+For instance, in contrastive learning using NCE-Loss, the loss value for each sample is computed by contrasting it with all negative samples. In other words, we need all samples in a batch to obtain the same contrastive loss as in the non-distributed scenario, but we only have part of samples locally in DDP. Only by using "all_gather" behavior to gather all negative samples for samples in local GPU can we obtain the correct contrastive loss for each sample.
+$$
+\mathcal{L}_{\text{NCE}} = -\log\left(\frac{sim(pos\_pairs)}{sim(pos\_pairs) + \sum_{k=1}^{K} sim(neg\_pairs)}\right)
+$$
+Here's an awesome blog that talks about the same topic: [Separable and Non-separable Loss in detail](https://amsword.medium.com/gradient-backpropagation-with-torch-distributed-all-gather-9f3941a381f8)
+
+So global context in such loss functions necessitates a collective communication pattern. We can use distributed communication function like all_gather to meet our expectations, it's worth noting that the all_gather function does not return gradient values upon completion. Solutions for this are discussed in the above-mentioned blog post. A naive way is do global calculation after we get final feature in each GPU:
+
+```python
+CODE BLOCK 1
+
+import torch
+import torch.distributed as dist
+
+# ...in every GPU
+
+all_feature1 = [torch.zeros_like(feature1) for i in range(dist.get_world_size())]
+dist.all_gather(all_feature1, feature1)
+all_feature1[dist.get_rank()] = feature1 # require_grad for local sample
+all_feature2 = [torch.zeros_like(feature2) for i in range(dist.get_world_size())]
+dist.all_gather(all_feature2, feature1)
+all_feature2[dist.get_rank()] = feature2
+
+# similarity matrix for loss, the diagonal line is the results of pos_pairs
+# sim_matrix shape: [global, global]
+sim_matrix = torch.matmul(all_feature1, all_feature2.t())
+
+loss = (loss_fun(sim_matrix) + loss_fun(sim_matrix.T)) / 2
+```
+
+
+
+In this way, i get my model converge correctly like non-distributed-training. However, we do much redundant calculation on all GPU, we expect more data efficiency with more process 'distributed', is there some optimization to solve it? With some modification, we can code below;
+
+```python
+CODE BLOCK 2
+
+import torch
+import torch.distributed as dist
+
+# ...in every GPU
+
+all_feature1 = [torch.zeros_like(feature1) for i in range(dist.get_world_size())]
+dist.all_gather(all_feature1, feature1)
+all_feature1[dist.get_rank()] = feature1
+all_feature2 = [torch.zeros_like(feature2) for i in range(dist.get_world_size())]
+dist.all_gather(all_feature2, feature1)
+all_feature2[dist.get_rank()] = feature2
+
+# change calculation size from [global, global] to [local, global]
+sim_matrix1 = torch.matmul(feature1, all_feature2.t())
+sim_matrix2 = torch.matmul(feature2, all_feature1.t())
+
+loss = (loss_fun(sim_matrix1) + loss_fun(sim_matrix2)) / 2
+```
+
+
+
+I have each GPU compute only the local positive samples compared to global negative samples, which enhances distributed computing efficiency and ensures the correctness of each sample's loss calculation.
+
+If the story ends now, this repository will no longer have a purpose. When i use it in some DDP contrastive fine-tune work, the model can not converge anymore.
+
+> Premature optimization is the root of all evil.                                    										---Donald Knuth
+
+The loss is calculated correctly through my analysis, so, let's dig deeper in Pytorch's gradient mechanism in DDP.
 
 
 
 #### gradient bucket
 
+Gradient bucket is a method used by DDP (DistributedDataParallel) to synchronize gradients between different processes. Detailed explanations can be found on the official PyTorch website. The following content is excerpted from the official website at https://pytorch.org/docs/stable/notes/ddp.html#internal-design:
 
-
-- **Backward Pass**: The `backward()` function is directly invoked on the loss `Tensor`, which is out of DDP’s control, and DDP uses autograd hooks registered at construction time to trigger gradients synchronizations. When one gradient becomes ready, its corresponding DDP hook on that grad accumulator will fire, and DDP will then mark that parameter gradient as ready for reduction. When gradients in one bucket are all ready, the `Reducer` kicks off an asynchronous `allreduce` on that bucket to calculate mean of gradients across all processes. When all buckets are ready, the `Reducer` will block waiting for all `allreduce` operations to finish. When this is done, averaged gradients are written to the `param.grad` field of all parameters. So after the backward pass, the grad field on the same corresponding parameter across different DDP processes should be the same.
+> **Backward Pass**: The `backward()` function is directly invoked on the loss `Tensor`, which is out of DDP’s control, and DDP uses autograd hooks registered at construction time to trigger gradients synchronizations. When one gradient becomes ready, its corresponding DDP hook on that grad accumulator will fire, and DDP will then mark that parameter gradient as ready for reduction. When gradients in one bucket are all ready, the `Reducer` kicks off an asynchronous `allreduce` on that bucket to calculate mean of gradients across all processes. When all buckets are ready, the `Reducer` will block waiting for all `allreduce` operations to finish. When this is done, averaged gradients are written to the `param.grad` field of all parameters. So after the backward pass, the grad field on the same corresponding parameter across different DDP processes should be the same.
 
 ![gradient_bucket](./gradient_bucket.png)
+
+
+
+In simple terms, the gradient bucket mechanism ensures that after each process computes gradients for their respective parameters, an all_reduce operation is performed on all gradients within each bucket to synchronize them by taking the mean. This default behavior is expected to yield the same gradient for each parameter as non-distributed computation.
+
+However, when gradient bucket meets a non-separable loss, the situation becomes more interesting.
+
+
+
+#### Contrastive learning gradient discrepancies: with vs. without DDP
+
+Let's see gradient behaviors in CODE BLOCK 1 and CODE BLOCK 2, what differences in them that cause wrong result in my optimization. Use some mathematical analysis:
+
 
 
 
@@ -137,7 +216,7 @@ Which is actually do trade-off between computation-cost and distributed-communic
 
 TODO:
 - finish theoretical analysis
-_ finish examples.py
+_ finish example_one in example.py
 ```
 
 
