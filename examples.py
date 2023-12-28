@@ -1,8 +1,7 @@
 '''
-This example file will show three different aspects of the ED4CT package:
+This example file will show two different aspects of the ED4CT package:
 1. Differences in gather gradient in advance and waiting for the gradient bucket
 2. Why assign ground_truth_pos to loss function explicitly is necessary
-3. How to use this package in your project
 '''
 
 
@@ -146,52 +145,13 @@ def test_two_loss():
     print(ground_truth_0th, ground_truth_1st) # tensor([ 1.,  5., 15.]) tensor([ 7., 11., 18.])
 
 
-def test_three_use():
-    print("This test is not runnable, just for reference.")
-    '''
-    # an example of how to use this package in your project
-    
-    import torch
-    import torch.distributed as dist
-    from ED4CT import AllGather
-    from ED4CT.LossFunc import CrossEntropy 
-    
-    
-    # your definition of model.forward()
-    def forward():
-        # ...preprocess before calculating similarity matrix, just like non-distributed training
-        # Now we get two features to calculate similarity matrix: features1 and features2
-        # features1 and features2 will be shaped in [local_batch_size, feature_size]
-        
-        if self.training and self.task_conf.n_gpus > 1:
-            # get all tensor from all GPU 
-            # the shape of all_feature is [global_batch_size, feature_size]
-            all_feature1 = AllGather(feature1)
-            all_feature2 = AllGather(feature2)
-            
-            # the shape of sim_matrix is [local_batch_size, global_batch_size]
-            sim_matrix1 = temperature * torch.matmul(feature1, all_feature2.t())
-            sim_matrix2 = temperature * torch.matmul(feature2, all_feature1.t())
-            
-            # get ground truth position of local data
-            ground_truth_pos = self.task_conf.global_batch_size / self.task_conf.n_gpus * dist.get_rank()
-            
-            loss1 = CrossEntropy(sim_matrix1, ground_truth_pos)
-            loss2 = CrossEntropy(sim_matrix2, ground_truth_pos)
-            
-            loss = (loss1 + loss2) / 2
-    
-    '''
-
-
 if __name__ == "__main__":
     # choose one of the following functions to run, comment out the others
     # for test_one_gather(), you should run this file with command: torchrun --nproc_per_node=2 examples.py
-    # advice: use two GPU is enough to run example one
+    # advice: two GPUs is enough to run example one
     # two gather mode to test: 'default' and 'ED4CT'
 
     # test_one_gather('default')
     # test_one_gather('ED4ct')
     # test_two_loss()
-    # test_three_use()
     pass
