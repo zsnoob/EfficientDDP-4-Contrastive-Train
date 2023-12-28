@@ -1,4 +1,5 @@
 # EfficientDDP-4-Contrastive-Train
+
 Optimizing the way of contrastive learning in PyTorch-DDP(DistributedDataParallel) multi-GPU training
 
 * Transforming similarity calculation from [global, global] to [local, global]
