@@ -105,7 +105,15 @@ Contrastingly, in the domain of contrastive learning under distributed data para
 
 For instance, in contrastive learning using NCE-Loss, the loss value for each sample is computed by contrasting it with all negative samples. In other words, we need all samples in a batch to obtain the same contrastive loss as in the non-distributed scenario, but we only have part of samples locally in DDP. Only by using "all_gather" behavior to gather all negative samples for samples in local GPU can we obtain the correct contrastive loss for each sample.
 
-![formula](https://latex.codecogs.com/svg.image?\mathcal{L}_{\text{NCE}}=-\log\left(\frac{sim(posPairs)}{sim(posPairs)&plus;\sum_{k=1}^{K}sim(negPairs)}\right))
+<p align="center">
+<img src="https://latex.codecogs.com/svg.image?\mathcal{L}_{\text{NCE}}=-\log\left(\frac{sim(pos\_pairs)}{sim(pos\_pairs)+\sum_{k=1}^{K}sim(neg\_pairs)}\right)"/>
+</p>
+
+
+$$
+\mathcal{L}_{\text{NCE}} = -\log\left(\frac{sim(pos\_pairs)}{sim(pos\_pairs) + \sum_{k=1}^{K} sim(neg\_pairs)}\right)
+$$
+
 
 Here's an awesome blog that talks about the same topic: [Separable and Non-separable Loss in detail](https://amsword.medium.com/gradient-backpropagation-with-torch-distributed-all-gather-9f3941a381f8)
 
