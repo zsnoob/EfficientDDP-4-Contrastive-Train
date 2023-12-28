@@ -91,7 +91,7 @@ def test_one_gather(mode):
     torch.manual_seed(rank)
     x1 = torch.randn(1, 4).to(device_id)
     x2 = torch.randn(1, 4).to(device_id)
-
+# 居中对齐 翻译成英文： Center alignment
     loss = model1(x1, x2, args)
 
     loss.mean().backward()
