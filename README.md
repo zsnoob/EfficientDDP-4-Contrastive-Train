@@ -103,7 +103,7 @@ In a distributed computing environment, the computation of loss functions that a
 
 Contrastingly, in the domain of contrastive learning under distributed data parallel (DDP), loss functions that are Non-separable by nature cannot be computed in isolation on individual GPUs to yield a complete loss calculation. 
 
-For instance, in contrastive learning using NCE-Loss, the loss value for each sample is computed by contrasting it with all negative samples. In other words, we need all samples in a batch to obtain the same contrastive loss as in the non-distributed scenario, but we only have part of samples locally in DDP. Only by using "all_gather" behavior to gather all negative samples for samples in local GPU can we obtain the correct contrastive loss for each sample.
+For instance, in contrastive learning using NCE-Loss, the loss value for each sample is computed by contrasting it with all negative samples. In other words, we need all samples in a batch to obtain the same contrastive loss as in the non-distributed scenario, but we only have part of samples locally in DDP. Only by using "all_gather" behavior to gather all negative samples for samples in local GPU can we obtain the correct contrastive loss for each sample.![formula](https://latex.codecogs.com/gif.latex?%5Ctext%7BNCE%7D%20%3D%20-%5Clog%5Cleft%28%5Cfrac%7B%5Ctext%7Bsim%7D%28pos_%7Bpairs%7D%29%7D%7B%5Ctext%7Bsim%7D%28pos_%7Bpairs%7D%29%20&plus;%20%5Csum_%7Bk%3D1%7D%5E%7BK%7D%5Ctext%7Bsim%7D%28neg_%7Bpairs%7D%29%7D%5Cright%29)
 $$
 \mathcal{L}_{\text{NCE}} = -\log\left(\frac{sim(pos\_pairs)}{sim(pos\_pairs) + \sum_{k=1}^{K} sim(neg\_pairs)}\right)
 $$
