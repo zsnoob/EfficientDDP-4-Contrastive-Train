@@ -113,11 +113,6 @@ For instance, in contrastive learning using NCE-Loss, the loss value for each sa
 </p>
 
 
-$$
-\mathcal{L}_{\text{NCE}} = -\log\left(\frac{sim(pos\_pairs)}{sim(pos\_pairs) + \sum_{k=1}^{K} sim(neg\_pairs)}\right)
-$$
-
-
 Here's an awesome blog that talks about the same topic: [Separable and Non-separable Loss in detail](https://amsword.medium.com/gradient-backpropagation-with-torch-distributed-all-gather-9f3941a381f8)
 
 So global context in such loss functions necessitates a collective communication pattern. We can use distributed communication function like all_gather to meet our expectations, it's worth noting that the all_gather function does not return gradient values upon completion. Solutions for this are discussed in the above-mentioned blog post. A naive way is do global calculation after we get final feature in each GPU:
@@ -206,22 +201,26 @@ Let's see gradient behaviors in CODE BLOCK 1 and CODE BLOCK 2, what differences 
 
 Here's a partial illustrative (not identical to code) computation graph to show the process of "compute the similarity matrix"
 
-![image-20231229002446740](.\pictures_in_README\block_1.png)
+![image-20231229002446740](./pictures_in_README/block_1.png)
 
 In deep learning, the backward propagation of gradients follows the chain rule, which means that every non-leaf node on the computation graph needs to compute gradients and propagate them backward towards the leaf nodes from the loss. In other words, gradients calculated for tensors at a certain computation step will propagate forward through the graph.
 
 Let's focus on `all_feature1`, `grad_input` as the gradient passed to the previous computation node, and `grad_output` as the gradient received from the next computation node, the gradients obtained for each `all_feature1` tensor in the step of calculating `sim_matrix` are:
-$$
-sim\_matrix = \mathbf{all\_feature1} \cdot \mathbf{all\_feature2}
-$$
 
-$$
-\frac{\partial sim\_matrix}{\partial \mathbf{all\_feature1}} = \mathbf{all\_feature2}
-$$
+<p align="center">
+<img src="https://latex.codecogs.com/svg.image?sim\_matrix=\mathbf{all\_feature1}\cdot\mathbf{all\_feature2}"/>
+</p>
 
-$$
-grad\_input = grad\_output ~ * ~ all\_feature2
-$$
+
+<p align="center">
+<img src="https://latex.codecogs.com/svg.image?\frac{\partial&space;sim\_matrix}{\partial\mathbf{all\_feature1}}=\mathbf{all\_feature2}"/>
+</p>
+
+<p align="center">
+<img src="https://latex.codecogs.com/svg.image?grad\_input=grad\_output~*~all\_feature2"/>
+</p>
+	
+
 
 Since `all_feature2` is consistent across all GPUs, the gradient calculation in current step, when performed backward, will be multiplied by the **same tensor** `all_feature2` on all GPUs. Ultimately, under the DDP's gradient bucket mechanism, the same result as non-distributed computation is obtained.
 
@@ -233,27 +232,36 @@ So, that's why CODE BLOCK 1 worked.
 
 * For CODE BLOCK 2 ---- local * global
 
-![image-20231229002503534](.\pictures_in_README\block_2.png)
+![image-20231229002503534](./pictures_in_README/block_2.png)
 
 Similarly to the previous scenario, it is easy to see that the gradients of `feature1` and `feature2` are the same in the computations across all GPUs because they are multiplied by the same `all_feature1` and `all_feature2` in the matrix multiplication. Let's focus on the gradient computation of one `all_feature` . Using  $feature_i$  to represent the feature computed on the i-th GPU. Assuming the same symbols as in the previous case:
-$$
-grad\_input = grad\_output ~ * ~ feature_i
-$$
+
+
+<p align="center">
+<img src="https://latex.codecogs.com/svg.image?grad\_input=grad\_output~*~feature_i"/>
+</p>
+
 The gradient of all_feature is not identical to each other on GPU any more.
 
 In this situation, we can get a leaf node's gradient on one of ith GPU before the computation, note that we only focus on the influence of all_feature's gradient:
-$$
-grad\_param_i= same\_priror_i * \frac{\sum^{local\_batch\_size}  (feature_i * diff\_subsequent_i)}{local\_batch\_size}
-$$
+
+<p align="center">
+<img src="https://latex.codecogs.com/svg.image?grad\_param_i=same\_priror_i*\frac{\sum^{local\_batch\_size}(feature_i*diff\_subsequent_i)}{local\_batch\_size}"/>
+</p>
+
 `same_priror_i` means on the ith GPU, the average gradient with data after all gather function. As we know the gradient bucket will do average at the end of the gradient calculation, we get the behavior in **CODE BLOCK 2**:
-$$
-grad\_param_i= \frac{1}{n\_gpu}~ * ~\sum^{n\_gpu}same\_priror_i ~*~ \frac{\sum^{local\_batch\_size}  (feature_i * diff\_subsequent_i)}{local\_batch\_size}
-$$
-But in original **non-distributed** situation, consider that divide batch samples in n_gpu chunks to construct a similar mathematical structure. Though we don't have $feature_i$ in **non-distributed** situation, we know feature_i is actually the slice of all_feature, so we can utilize the full derivative formula: $f'(all\_feature)=\sum feature_i$ . Remember, we use `mean` on every sample to get batch-level loss in all situation nonetheless globally or locally:
-$$
-grad\_param_i=\frac{1}{n\_gpu} ~ * ~  \sum^{n\_gpu}same\_priror_i ~ * ~ \frac{\sum^{local\_batch\_size}feature_i * \sum^{ local\_batch\_size}diff\_subsequent_i}{local\_batch\_size}
-$$
-Two equations are apparently different in connection between $feature $ and $ diff\_subsequent. $
+
+<p align="center">
+<img src="https://latex.codecogs.com/svg.image?grad\_param_i=\frac{1}{n\_gpu}~*~\sum^{n\_gpu}same\_priror_i~*~\frac{\sum^{local\_batch\_size}(feature_i*diff\_subsequent_i)}{local\_batch\_size}"/>
+</p>
+
+But in original **non-distributed** situation, consider that divide batch samples in n_gpu chunks to construct a similar mathematical structure. Though we don't have $feature_i$ in **non-distributed** situation, we know feature_i is actually the slice of all_feature, so we can utilize the full derivative formula: $f'(all\\_feature)=\sum feature_i$ . Remember, we use `mean` on every sample to get batch-level loss in all situation nonetheless globally or locally:
+
+<p align="center">
+<img src="https://latex.codecogs.com/svg.image?grad\_param_i=\frac{1}{n\_gpu}~*~\sum^{n\_gpu}same\_priror_i~*~\frac{\sum^{local\_batch\_size}feature_i*\sum^{local\_batch\_size}diff\_subsequent_i}{local\_batch\_size}"/>
+</p>
+
+Two equations are apparently different in connection between $feature$ and $diff\\_subsequent$.
 
 
 
@@ -264,7 +272,8 @@ The backward method of all gather behavior in CODE BLOCK 2 can be described as f
 all_gather_backward(grad_output):
     # naive 'scatter' to fit shape of input tensor in the forward process
     grad_input = grad_output[local_batch_size * rank: local_batch_size * (ctx.rank + 1)]
-    # unlike CODE BLOCK 1, now the values of grad_output on each GPU are no longer the       # same. This slicing approach neglects a significant portion of unused gradient, 	       # causing divergence.    
+    # unlike CODE BLOCK 1, now the values of grad_output on each GPU are no longer the
+    # same. This slicing approach neglects a significant portion of unused gradient, causing divergence.    
     
     return grad_input
 ```
@@ -305,6 +314,7 @@ class AllGather(torch.autograd.Function):
             None,
         )
 ```
+When i use it on my experiment which diverges on CODE BLOCK 2 version of all gather, the model can converge as normal.
 
 Overloading `torch.autograd.Function` allows us to customize the forward and backward behavior of our function. The forward operation, without further explanation, aggregates tensors from all GPUs into one tensor.
 
@@ -341,7 +351,7 @@ In the previous discussion, we learned that each GPU actually computes a portion
 
 So from the image below, we can see that the positive pairs computed locally by each GPU are a part of the diagonal elements:
 
-![image-20231229162444326](.\pictures_in_README\local_alignment.png)
+![image-20231229162444326](./pictures_in_README/local_alignment.png)
 
 So, we need to assign the start position to loss function that GPU can get the right ground truth elements.
 
