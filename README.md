@@ -208,12 +208,12 @@ In deep learning, the backward propagation of gradients follows the chain rule, 
 Let's focus on `all_feature1`, `grad_input` as the gradient passed to the previous computation node, and `grad_output` as the gradient received from the next computation node, the gradients obtained for each `all_feature1` tensor in the step of calculating `sim_matrix` are:
 
 <p align="center">
-<img src="https://latex.codecogs.com/svg.image?sim\_matrix=\mathbf{all\_feature1}\cdot\mathbf{all\_feature2}"/>
+<img src="https://latex.codecogs.com/svg.image?sim\_matrix=all\_feature1\cdot&space;all\_feature2"/>
 </p>
 
 
 <p align="center">
-<img src="https://latex.codecogs.com/svg.image?\frac{\partial&space;sim\_matrix}{\partial\mathbf{all\_feature1}}=\mathbf{all\_feature2}"/>
+<img src="https://latex.codecogs.com/svg.image?\frac{\partial&space;sim\_matrix}{\partial&space;all\_feature1}=all\_feature2"/>
 </p>
 
 <p align="center">
