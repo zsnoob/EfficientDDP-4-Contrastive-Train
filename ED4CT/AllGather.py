@@ -19,6 +19,6 @@ class AllGather(torch.autograd.Function):
         dist.all_reduce(grad_output, op=dist.ReduceOp.SUM)
 
         return (
-            grad_output[ctx.batch_size * ctx.rank: ctx.local_batch_size * (ctx.rank + 1)],
+            grad_output[ctx.local_batch_size * ctx.rank: ctx.local_batch_size * (ctx.rank + 1)],
             None,
         )

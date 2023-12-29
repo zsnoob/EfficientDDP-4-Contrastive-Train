@@ -206,7 +206,7 @@ Let's see gradient behaviors in CODE BLOCK 1 and CODE BLOCK 2, what differences 
 
 Here's a partial illustrative (not identical to code) computation graph to show the process of "compute the similarity matrix"
 
-![image-20231229002446740](C:\Users\w\AppData\Roaming\Typora\typora-user-images\image-20231229002446740.png)
+![image-20231229002446740](.\pictures_in_README\block_1.png)
 
 In deep learning, the backward propagation of gradients follows the chain rule, which means that every non-leaf node on the computation graph needs to compute gradients and propagate them backward towards the leaf nodes from the loss. In other words, gradients calculated for tensors at a certain computation step will propagate forward through the graph.
 
@@ -223,7 +223,7 @@ $$
 grad\_input = grad\_output ~ * ~ all\_feature2
 $$
 
-Since `all_feature2` is consistent across all GPUs, the gradient calculation in this step, when performed backward, will be multiplied by the same tensor `all_feature2` on all GPUs. Ultimately, under the DDP's gradient bucket mechanism, the same result as non-distributed computation is obtained.
+Since `all_feature2` is consistent across all GPUs, the gradient calculation in current step, when performed backward, will be multiplied by the **same tensor** `all_feature2` on all GPUs. Ultimately, under the DDP's gradient bucket mechanism, the same result as non-distributed computation is obtained.
 
 (Let me add a little more reasoning detail, because, after the 'all gather' operation, every GPU's computational behavior becomes identical to non-distributed computing, and the gradients on all GPUs in backward before reaching the 'all gather' operation are the same. In terms of the chain rule, this manifests as each GPU's gradient computation chain having the **same portion** before 'all gather.' Therefore, the common part of these GPU's gradients can be factored out. The remaining gradients in the gradient bucket will be summed and averaged at the end, making formula of gradient chain **equivalent to** the gradient backward computation in **non-distributed** training.)
 
@@ -233,32 +233,45 @@ So, that's why CODE BLOCK 1 worked.
 
 * For CODE BLOCK 2 ---- local * global
 
-![image-20231229002503534](C:\Users\w\AppData\Roaming\Typora\typora-user-images\image-20231229002503534.png)
+![image-20231229002503534](.\pictures_in_README\block_2.png)
 
 Similarly to the previous scenario, it is easy to see that the gradients of `feature1` and `feature2` are the same in the computations across all GPUs because they are multiplied by the same `all_feature1` and `all_feature2` in the matrix multiplication. Let's focus on the gradient computation of one `all_feature` . Using  $feature_i$  to represent the feature computed on the i-th GPU. Assuming the same symbols as in the previous case:
 $$
 grad\_input = grad\_output ~ * ~ feature_i
 $$
+The gradient of all_feature is not identical to each other on GPU any more.
+
 In this situation, we can get a leaf node's gradient on one of ith GPU before the computation, note that we only focus on the influence of all_feature's gradient:
 $$
-grad\_param_i= same\_portion_i * \frac{\sum^{local\_batch\_size}  (feature_i * diff\_gradient_i)}{local\_batch\_size}
+grad\_param_i= same\_priror_i * \frac{\sum^{local\_batch\_size}  (feature_i * diff\_subsequent_i)}{local\_batch\_size}
 $$
-`same_portion_i` means on the ith GPU, the average gradient with local data before all gather function. As we know the gradient bucket will do average at the end of the gradient calculation, we get the behavior in **CODE BLOCK 2**:
+`same_priror_i` means on the ith GPU, the average gradient with data after all gather function. As we know the gradient bucket will do average at the end of the gradient calculation, we get the behavior in **CODE BLOCK 2**:
 $$
-grad\_param_i= \frac{1}{n\_gpu}~ * ~\sum^{n\_gpu}same\_portion_i ~*~ \frac{\sum^{local\_batch\_size}  (feature_i * diff\_gradient_i)}{local\_batch\_size}
+grad\_param_i= \frac{1}{n\_gpu}~ * ~\sum^{n\_gpu}same\_priror_i ~*~ \frac{\sum^{local\_batch\_size}  (feature_i * diff\_subsequent_i)}{local\_batch\_size}
 $$
-But in original **non-distributed** situation, it is (consider that divide batch samples in n_gpu * local_bath_size to construct a similar mathematical structure. Remember, we use `mean` to get batch-level loss in all situation nonetheless globally or locally):
+But in original **non-distributed** situation, consider that divide batch samples in n_gpu chunks to construct a similar mathematical structure. Though we don't have $feature_i$ in **non-distributed** situation, we know feature_i is actually the slice of all_feature, so we can utilize the full derivative formula: $f'(all\_feature)=\sum feature_i$ . Remember, we use `mean` on every sample to get batch-level loss in all situation nonetheless globally or locally:
 $$
-grad\_param_i=\frac{1}{n\_gpu} ~ * ~  \sum^{n\_gpu}same\_portion_i ~ * ~ \frac{\sum^{n\_gpu*local\_batch\_size}feature_i * \sum^{n\_gpu* local\_batch\_size}diff\_gradient_i}{local\_batch\_size}
+grad\_param_i=\frac{1}{n\_gpu} ~ * ~  \sum^{n\_gpu}same\_priror_i ~ * ~ \frac{\sum^{local\_batch\_size}feature_i * \sum^{ local\_batch\_size}diff\_subsequent_i}{local\_batch\_size}
 $$
-Two equations are apparently different in connection between $feature $ and $ diff\_gradient. $
+Two equations are apparently different in connection between $feature $ and $ diff\_subsequent. $
 
 
 
-**Summarizing the mathematical reasoning above, we arrive at an important conclusion: in non-distributed computation, the summation of each `feature_i` has a common impact on the subsequent global gradients. **
+**Summarizing the mathematical reasoning above, we arrive at an important conclusion: in non-distributed computation, the summation of each `feature_i` has a common impact on the subsequent global gradients. This is different from the behavior of the gradient bucket in CODE BLOCK 2, where each `feature_i` essentially only affects the local gradient. Therefore, with mathematical analysis, the final averaging behavior in the bucket is not equivalent to the behavior in non-distributed computing.**
 
-**This is different from the behavior of the gradient bucket in CODE BLOCK 2, where each `feature_i` essentially only affects the local gradient. Therefore, with mathematical analysis, the final averaging behavior in the bucket is not equivalent to the behavior in non-distributed computing.**
+The backward method of all gather behavior in CODE BLOCK 2 can be described as follows, note that backward behavior is the same as CODE  BLOCK 1, but the value of gradient is slightly different:
+```python
+all_gather_backward(grad_output):
+    # naive 'scatter' to fit shape of input tensor in the forward process
+    grad_input = grad_output[local_batch_size * rank: local_batch_size * (ctx.rank + 1)]
+    # unlike CODE BLOCK 1, now the values of grad_output on each GPU are no longer the       # same. This slicing approach neglects a significant portion of unused gradient, 	       # causing divergence.    
+    
+    return grad_input
+```
 
+
+
+Reviewing the earlier discussion on separable and non-separable cases, due to the calculation of the non-separable loss involving a global data gather operation, when propagating gradients backward, we cannot only consider local gradients but must also take into account global gradients by summation (in accordance with the mathematical definition of full derivatives). 
 
 
 So, we need to customize the backward behavior in all gather function using `torch.autograd.Function`.
@@ -288,7 +301,7 @@ class AllGather(torch.autograd.Function):
         dist.all_reduce(grad_output, op=dist.ReduceOp.SUM)
 
         return (
-            grad_output[ctx.batch_size * ctx.rank: ctx.local_batch_size * (ctx.rank + 1)],
+            grad_output[ctx.local_batch_size * ctx.rank: ctx.local_batch_size * (rank + 1)],
             None,
         )
 ```
@@ -297,9 +310,9 @@ Overloading `torch.autograd.Function` allows us to customize the forward and bac
 
 In the backward operation, based on mathematical reasoning, we need to manually reduce all gradients here in a summation manner, rather than waiting for gradient synchronization by the gradient bucket. This step ensures equivalence with the behavior of non-distributed training.
 
-Observing the return values in `backward`, the elements of the tuple correspond to the gradients of the values that follow the `ctx` parameter in the `forward`. As we all know, the propagation process of forward and backward is entirely a forward and reverse process in terms of element shapes.
+Observing the return values in `backward`, the elements of the tuple correspond to the gradients of the `tensor` and `args` in the `forward`. As we all know, the propagation process of forward and backward is entirely a forward and reverse process in terms of element shapes.
 
-The first element of the return value can be operationally referred to as 'scatter' in distributed operations, which means splitting a computation result into different blocks and distributing them to different distributed nodes. So, why I choose to performing a reduce operation on all nodes instead of using the 'reduce_scatter' operation on a single node and only use single function globally?
+The first element of the return value can be operationally referred to as 'scatter' in distributed operations, which means splitting a computation result into different blocks and distributing them to different distributed nodes. The backward process seems like 'reduce + scatter'. So, why I choose to perform a all reduce operation on all nodes instead of using the 'reduce_scatter' operation on single node and only use single function globally?
 
 * all_reduce
 
@@ -315,7 +328,7 @@ image source: [Collective Operations — NCCL 2.19.3 documentation (nvidia.com)]
 
 ### Implementation: all_reduce vs. reduce_scatter?
 
-Which is actually do trade-off between computation-cost and distributed-communication-cost.
+Which is actually do trade-off between computation-cost and distributed-communication-cost. Though i don't have a huge distributed system enough to verify it, i can give some naive analysis.
 
 * Using all reduce, we do not need another communication operation among all nodes and only do matrix slicing locally, which achieves both balanced computation time and minimize additional communication operations as much as possible. But it will enlarge computation cost in global view.
 *  Using reduce scatter, means only one node need to do all the scatter work, other nodes will wait for data. This will cause intervals in GPU running, one node will do many more jobs and more communication operations will be executed.
@@ -324,7 +337,21 @@ Which is actually do trade-off between computation-cost and distributed-communic
 
 ### A simple way to align local ground truth element in sim_matrix
 
+In the previous discussion, we learned that each GPU actually computes a portion of the global similarity matrix locally, more precisely, it is a subset of rows in the similarity matrix. In the loss function of contrastive learning, it is usually necessary to specify ground truth samples, which in the global similarity matrix correspond to the diagonal elements, i.e., positive pairs.
 
+So from the image below, we can see that the positive pairs computed locally by each GPU are a part of the diagonal elements:
+
+![image-20231229162444326](.\pictures_in_README\local_alignment.png)
+
+So, we need to assign the start position to loss function that GPU can get the right ground truth elements.
+
+```python
+ground_truth_pos = local_batch_size * rank
+
+# the torch.diag()'s second parameter can assign the start position of the diagonal line
+# ...in the loss function
+ground_truth = torch.diag(sim_matrix_per_GPU, ground_truth_pos)
+```
 
 
 
@@ -337,6 +364,13 @@ Which is actually do trade-off between computation-cost and distributed-communic
 TODO:
 - finish theoretical analysis
 _ finish example_one in example.py
+
+
+**Version 0.2.0 (December 29, 2023)**
+- finish theoretical analysis
+
+TODO:
+- test example.py
 ```
 
 
