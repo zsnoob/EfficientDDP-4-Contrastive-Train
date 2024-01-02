@@ -4,7 +4,7 @@ Optimizing the way of contrastive learning in PyTorch-DDP(DistributedDataParalle
 
 * Transforming similarity calculation from [global, global] to [local, global]
 
-  e.g. Many implementations are using former way, such as [SimCLR](https://github.com/Spijkervet/SimCLR/blob/master/simclr/modules/nt_xent.py#L36), [essl](https://github.com/rdangovs/essl/blob/main/imagenet/simclr/main.py#L232)
+  e.g. Many implementations are using former way, such as [SimCLR](https://github.com/Spijkervet/SimCLR/blob/master/simclr/modules/nt_xent.py#L39), [essl](https://github.com/rdangovs/essl/blob/main/imagenet/simclr/main.py#L232)
 * Addressing gradient issues in distributed calculation
 * Aligning ground truth positions of local similarity matrix
 
