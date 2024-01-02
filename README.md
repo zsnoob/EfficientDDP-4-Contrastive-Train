@@ -30,7 +30,7 @@ EfficientDDP-4-Contrastive-Train/
 
 ## Where you can use it?
 
-Your own contrastive learning pre-train or fine-tune project, using DDP to accelerate, architectures like [CLIP](https://openai.com/blog/clip/), [ALIGN](https://arxiv.org/abs/2102.05918).
+Your own contrastive learning pre-train or fine-tune project, using DDP to accelerate, architectures like [CLIP](https://openai.com/blog/clip/), [ALIGN](https://arxiv.org/abs/2102.05918) [SimCLR](https://github.com/Spijkervet/SimCLR/blob/master/simclr/modules/nt_xent.py#L39) [essl](https://github.com/rdangovs/essl/blob/main/imagenet/simclr/main.py#L232).
 
 
 
