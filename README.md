@@ -393,5 +393,5 @@ TODO:
 
 Heuristic thoughts and discussions from PyTorch forum and openai/CLIP issues and comments.
 
-Motivated by https://github.com/openai/CLIP/issues/132#issuecomment-908004353, deeply grateful to @jongwook for his generous and patient responses regarding implementation details in CLIP training.
+Motivated by [https://github.com/openai/CLIP/issues/132#issuecomment-908004353](https://github.com/openai/CLIP/issues/29#issuecomment-770135793), deeply grateful to @jongwook for his generous and patient responses regarding implementation details in CLIP training.
 
