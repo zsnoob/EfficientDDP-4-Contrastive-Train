@@ -52,7 +52,6 @@ def test_one_gather(mode):
             nn.init.ones_(self.feature_extractor2.bias)
 
         def forward(self, x1, x2, args):
-            # 对两个输入分别进行特征提取
             features1 = self.feature_extractor1(x1)
             features2 = self.feature_extractor2(x2)
             if self.gather_mode == 'default':
@@ -91,7 +90,7 @@ def test_one_gather(mode):
     torch.manual_seed(rank)
     x1 = torch.randn(1, 4).to(device_id)
     x2 = torch.randn(1, 4).to(device_id)
-# 居中对齐 翻译成英文： Center alignment
+
     loss = model1(x1, x2, args)
 
     loss.mean().backward()
@@ -151,6 +150,7 @@ if __name__ == "__main__":
     # advice: two GPUs is enough to run example one
     # two gather mode to test: 'default' and 'ED4CT'
 
+    # In version 0.2.0, only the test two can be tested!
     # test_one_gather('default')
     # test_one_gather('ED4ct')
     # test_two_loss()
