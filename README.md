@@ -120,7 +120,7 @@ Here's an awesome blog that talks about the same topic: [Separable and Non-separ
 So global context in such loss functions necessitates a collective communication pattern. We can use distributed communication function like all_gather to meet our expectations, it's worth noting that the all_gather function does not return gradient values upon completion. Solutions for this are discussed in the above-mentioned blog post. A naive way is do global calculation after we get final feature in each GPU:
 
 ```python
-CODE BLOCK 1
+CODE BLOCK 1 # Also the most common way in many implementation
 
 import torch
 import torch.distributed as dist
